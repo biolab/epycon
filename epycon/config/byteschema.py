@@ -2,9 +2,11 @@ from dataclasses import dataclass
 
 MASTER_FILENAME = 'MASTER'
 
+PROC_FILENAME = 'PROC'
+
 ENTRIES_FILENAME = 'entries.log'
 
-LOG_PATTERN = r'[0-9]*.log'
+LOG_PATTERN = r'^[0-9a-f]{8}\.log$'
 
 ID_MAP_FILE = 'id_mapping'
 
@@ -14,10 +16,17 @@ GROUP_MAP = {
     1: 'PROTOCOL',
     2: 'EVENT',
     3: 'NOTE',
-    4: 'IDK',
-    5: 'NOTE',
-    6: 'PACE',
+    4: 'IDK4',
+    5: 'IDK5',
+    6: 'PACE',                  # timing and location of pacing
+    7: 'IDK7',
+    8: 'MEASUREMENT',
+    9: 'IMAGE',
+    11: 'MEDICATION',
+    13: 'REVIEW',
+    16: 'ABLATION',
     17: 'RATE',
+    20: 'PACE SETTINGS',        # strength and duration of pulse
 }
 
 SOURCE_MAP = {
@@ -190,7 +199,17 @@ class WMx64LogSchema:
 class WMx64MasterSchema:
     """ Master file
     """
-    subject_id = 0x43, 0x4F
+    subject_name = 0x2, 0x43
+    subject_id = 0x43, 0x50
+
+# ---------------------- PROC -----------------------
+@dataclass
+class WMx64ProcSchema:
+    """ PROC file
+    """
+    study_date = 0x2, 0xE
+    study_name = 0x338, 0x360
+    institution = 0x454, 0x47B
 
 
 # ---------------------- Entries ----------------------

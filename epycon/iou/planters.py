@@ -188,13 +188,13 @@ class CSVPlanter(DatalogPlanter):
             else:
                 assert len(self.column_names) == darray.shape[1]
             
-            self._f_obj.writelines(self.delimiter.join(self.column_names) + '\n')
+            self._f_obj.writelines(self._delimiter.join(self.column_names) + '\n')
             self._header_isstored = True
 
         # create csv formatting
         if self._fmt is None:
             string_fmt = kwargs.pop("delimiter", "%d")
-            self._fmt = self.delimiter.join([string_fmt]*darray.shape[1])
+            self._fmt = self._delimiter.join([string_fmt]*darray.shape[1])
 
         # write data
         self._f_obj.write(('\n'.join([self._fmt]*darray.shape[0]) + '\n') % tuple(darray.ravel()))

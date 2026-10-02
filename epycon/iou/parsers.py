@@ -9,7 +9,7 @@ import numpy as np
 import h5py as h
 
 from epycon.core._typing import (
-    Union, List, Sequence, PathLike, ArrayLike, 
+    Union, List, Sequence, PathLike, ArrayLike, Dict,
 )
 
 from epycon.core._validators import (
@@ -38,6 +38,7 @@ from epycon.core._dataclasses import (
 from epycon.config.byteschema import (
     WMx32LogSchema, WMx32MasterSchema, WMx32EntriesSchema,
     WMx64LogSchema, WMx64MasterSchema, WMx64EntriesSchema,
+    WMx64ProcSchema,
 )
 
 from epycon.config.byteschema import (
@@ -53,9 +54,11 @@ def _twos_complement(darray: np.array, sample_size: int):
         sample_size (int): _description_
     """
     twos_complement = 2 ** (8 * sample_size) - 1
-    darray[darray >= (twos_complement // 2 - 1)] -= twos_complement
-
-    return darray
+    original_dtype = darray.dtype
+    darray = darray.astype(np.int64)
+    mask = darray >= (twos_complement // 2 - 1)
+    darray[mask] -= twos_complement
+    return darray.astype(original_dtype)
 
 
 class LogParser(abc.Iterator):
@@ -246,7 +249,7 @@ class LogParser(abc.Iterator):
 
         # Get timestamp
         startbyte, endbyte = self.diary.header.timestamp
-        timestamp = parsebin(bheader[startbyte:endbyte], self.timestampfmt) // self.timestampfactor
+        timestamp = parsebin(bheader[startbyte:endbyte], self.timestampfmt) # // self.timestampfactor
 
         # Get number of active channels
         startbyte, endbyte = self.diary.header.num_channels
@@ -333,6 +336,12 @@ class LogParser(abc.Iterator):
             except ValueError:
                 continue
 
+            # lowpass and highpass frequency on channel
+            startbyte, endbyte = self.diary.channels.lowpass_freq
+            lowpass_freq = parsebin(bchunk[startbyte:endbyte], '<H')
+            startbyte, endbyte = self.diary.channels.highpass_freq
+            highpass_freq = parsebin(bchunk[startbyte:endbyte], '<H')
+
             # retrieve and filter junction box pins; pin polarity = [positive, negative]
             startbyte, endbyte = self.diary.channels.jbox_pins
             pins = parsebin(bchunk[startbyte:endbyte], 'BB')
@@ -341,26 +350,12 @@ class LogParser(abc.Iterator):
                 pins,
             ))
 
-            if any(item is None for item in references):
-                # store single-reference leads (usually unipolar or surface ecg leads)
-                channels.content.append(
-                    Channel(ch_name, references[0], source, pins[0],)
-                    )
-                
-                # create mapping computed channel -> index of the original channel in the channels list
-                channels.mount[ch_name] = (i,)
-                i += 1
-            else:
-                # store bipolar leads as separate unipolar channels
-                channels.content.extend([
-                    Channel("u+"+ch_name, references[0], source, pins[0],),
-                    Channel("u-"+ch_name, references[1], source, pins[1],),
-                    ])
-                
-                # create mapping computed channel -> index of the original channel in the channels list
-                channels.mount[ch_name] = (i, i+1)
-                i += 2
-            
+            channels.content.append(
+                Channel(ch_name, references, source, pins, lowpass_freq, highpass_freq)
+            )
+            channels.mount[ch_name] = (i,)
+            i += 1
+    
         return Header(
             timestamp,
             num_channels,
@@ -456,10 +451,51 @@ def _readmaster(
     except IOError as e:
         raise IOError
 
-    start_address, end_address = WMx64MasterSchema.subject_id    
+    start_address, end_address = WMx64MasterSchema.subject_id
+    subject_id = barray[start_address:end_address].decode("ascii", "ignore").strip("\x00")
+    start_address, end_address = WMx64MasterSchema.subject_name
+    subject_name = barray[start_address:end_address].decode("ascii", "ignore").strip("\x00")
 
-    return barray[start_address:end_address].decode("ascii", "ignore").strip("\x00")
+    return {
+        "subject_id": subject_id,
+        "subject_name": subject_name,
+    }
 
+def _readproc(
+    f_path: Union[str, bytes, PathLike],
+    ) -> Dict[str, str]:
+    """Parse basic metadata from the PROC file.
+
+    Returns a small dict with: study_date, study_name, institution
+    """
+    try:
+        barray = readbin(f_path)
+    except IOError as e:
+        raise IOError(e)
+
+    date_str = safe_string(
+        barray[WMx64ProcSchema.study_date[0] : WMx64ProcSchema.study_date[1]]
+        .decode("ascii", "ignore")
+        .strip("\x00")
+    )
+
+    study_name = safe_string(
+        barray[WMx64ProcSchema.study_name[0] : WMx64ProcSchema.study_name[1]]
+        .decode("ascii", "ignore")
+        .strip("\x00")
+    )
+
+    institution = safe_string(
+        barray[WMx64ProcSchema.institution[0] : WMx64ProcSchema.institution[1]]
+        .decode("ascii", "ignore")
+        .strip("\x00")
+    )
+
+    return {
+        "study_date": date_str,
+        "study_name": study_name,
+        "institution": institution,
+    }
 
 def _readentries(
     f_path: Union[str, bytes, os.PathLike],
@@ -530,10 +566,6 @@ def _readentries(
         start_byte, end_byte = diary.text
         message = barray[pointer + start_byte:pointer + end_byte]
         message = "".join([char for i in struct.unpack("<" + "B" * len(message), message) if (char:= chr(i)).isprintable()])
-        
-        # if re.match('[\x00-\x1f\x7f]+', text):
-        #     continue
-
         entries.append(
             Entry(
                 fid=datalog_uid,

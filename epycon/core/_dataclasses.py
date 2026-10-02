@@ -40,6 +40,8 @@ class Channel:
     reference: Union[int, None]    
     source: str
     pin: Sequence[int]
+    lowpass_freq: int
+    highpass_freq: int
 
 
 @dataclass()
@@ -67,7 +69,7 @@ class Channels:
 
     @property
     def raw_mappings(self):
-        return {item.name:(item.reference,) for item in self.content}
+        return {item.name:item.reference for item in self.content}
 
     @property
     def computed_mappings(self):
